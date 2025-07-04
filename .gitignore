@@ -1,0 +1,9 @@
+# Ignore build artifacts and temporary files
+*.o
+*.obj
+build/
+install/
+
+# Ignore IDEs and editor files
+.cache/
+.vscode/

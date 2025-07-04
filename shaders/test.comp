@@ -1,0 +1,30 @@
+#version 450
+
+/**
+ * @file test.comp
+ * @brief Simple test compute shader
+ */
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform TestParams {
+    float value;
+    uint width;
+    uint height;
+    uint padding;
+} params;
+
+layout(binding = 1, std430) restrict writeonly buffer OutputBuffer {
+    uint pixels[];
+} outputBuffer;
+
+void main() {
+    uvec2 pixelCoord = gl_GlobalInvocationID.xy;
+    
+    if (pixelCoord.x >= params.width || pixelCoord.y >= params.height) {
+        return;
+    }
+    
+    uint pixelIndex = pixelCoord.y * params.width + pixelCoord.x;
+    outputBuffer.pixels[pixelIndex] = 0xFF0000FF; // Red color
+}
