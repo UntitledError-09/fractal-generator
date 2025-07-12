@@ -3,14 +3,14 @@
 /**
  * @file mandelbrot.comp
  * @brief Mandelbrot Set Compute Shader
- * 
- * This compute shader calculates the Mandelbrot set for each pixel in the output image.
- * It uses double precision for better accuracy at high zoom levels and outputs
- * 32-bit RGBA color values.
- * 
+ *
+ * This compute shader calculates the Mandelbrot set for each pixel in the
+ * output image. It uses double precision for better accuracy at high zoom
+ * levels and outputs 32-bit RGBA color values.
+ *
  * Local work group size: 16x16 (256 threads per group)
  * This provides good GPU utilization on most modern hardware.
- * 
+ *
  * @author Fractal Generator Project
  * @date July 4, 2025
  * @version Phase 2
@@ -21,45 +21,47 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Fractal parameters uniform buffer
 layout(binding = 0) uniform FractalParameters {
-    float centerX;          // Center X coordinate in fractal space
-    float centerY;          // Center Y coordinate in fractal space
-    float zoom;             // Zoom level (higher = more zoomed in)
-    uint maxIterations;     // Maximum iterations for convergence test
-    uint imageWidth;        // Output image width in pixels
-    uint imageHeight;       // Output image height in pixels
-    float colorScale;       // Scale factor for color mapping
-    uint padding;           // Padding for alignment
-} params;
+  float centerX;      // Center X coordinate in fractal space
+  float centerY;      // Center Y coordinate in fractal space
+  float zoom;         // Zoom level (higher = more zoomed in)
+  uint maxIterations; // Maximum iterations for convergence test
+  uint imageWidth;    // Output image width in pixels
+  uint imageHeight;   // Output image height in pixels
+  float colorScale;   // Scale factor for color mapping
+  uint fractalType;   // Fractal type (0=Mandelbrot, 1=Julia, 2=Burning Ship)
+}
+params;
 
 // Output image buffer (RGBA32 format)
 layout(binding = 1, std430) restrict writeonly buffer OutputBuffer {
-    uint pixels[];          // Output pixel data (RGBA packed into uint32)
-} outputBuffer;
+  uint pixels[]; // Output pixel data (RGBA packed into uint32)
+}
+outputBuffer;
 
 /**
  * @brief Convert HSV color to RGB
- * 
+ *
  * Converts HSV (Hue, Saturation, Value) color space to RGB.
  * Used for creating smooth color gradients based on iteration count.
- * 
+ *
  * @param h Hue (0.0 - 1.0)
  * @param s Saturation (0.0 - 1.0)
  * @param v Value/Brightness (0.0 - 1.0)
  * @return RGB color as vec3
  */
 vec3 hsv2rgb(float h, float s, float v) {
-    vec3 c = vec3(h, s, v);
-    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+  vec3 c = vec3(h, s, v);
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
 /**
  * @brief Pack RGBA values into a single uint32
- * 
+ *
  * Packs 4 8-bit color components (RGBA) into a single 32-bit unsigned integer.
  * Format: 0xAABBGGRR (little-endian RGBA)
- * 
+ *
  * @param r Red component (0.0 - 1.0)
  * @param g Green component (0.0 - 1.0)
  * @param b Blue component (0.0 - 1.0)
@@ -67,142 +69,231 @@ vec3 hsv2rgb(float h, float s, float v) {
  * @return Packed RGBA value as uint32
  */
 uint packRGBA(float r, float g, float b, float a) {
-    uint rInt = uint(clamp(r * 255.0, 0.0, 255.0));
-    uint gInt = uint(clamp(g * 255.0, 0.0, 255.0));
-    uint bInt = uint(clamp(b * 255.0, 0.0, 255.0));
-    uint aInt = uint(clamp(a * 255.0, 0.0, 255.0));
-    
-    return (aInt << 24) | (bInt << 16) | (gInt << 8) | rInt;
+  uint rInt = uint(clamp(r * 255.0, 0.0, 255.0));
+  uint gInt = uint(clamp(g * 255.0, 0.0, 255.0));
+  uint bInt = uint(clamp(b * 255.0, 0.0, 255.0));
+  uint aInt = uint(clamp(a * 255.0, 0.0, 255.0));
+
+  return (aInt << 24) | (bInt << 16) | (gInt << 8) | rInt;
 }
 
 /**
  * @brief Calculate Mandelbrot set iteration count for a point
- * 
+ *
  * Computes the number of iterations required for the point (cx, cy) to escape
  * the Mandelbrot set. Uses the standard escape radius of 2.0.
- * 
+ *
  * The Mandelbrot set is defined as the set of complex numbers c for which
  * the sequence z_{n+1} = z_n^2 + c (starting with z_0 = 0) remains bounded.
- * 
+ *
  * @param cx Real part of the complex number
  * @param cy Imaginary part of the complex number
  * @return Number of iterations before escape (0 to maxIterations)
  */
 uint mandelbrotIterations(float cx, float cy) {
-    float zx = 0.0;
-    float zy = 0.0;
-    
-    for (uint i = 0; i < params.maxIterations; i++) {
-        // Check if point has escaped (|z| > 2)
-        float zx2 = zx * zx;
-        float zy2 = zy * zy;
-        
-        if (zx2 + zy2 > 4.0) {  // 4.0 = 2.0^2 (escape radius squared)
-            return i;
-        }
-        
-        // z = z^2 + c
-        float temp = zx2 - zy2 + cx;
-        zy = 2.0 * zx * zy + cy;
-        zx = temp;
+  float zx = 0.0;
+  float zy = 0.0;
+
+  for (uint i = 0; i < params.maxIterations; i++) {
+    // Check if point has escaped (|z| > 2)
+    float zx2 = zx * zx;
+    float zy2 = zy * zy;
+
+    if (zx2 + zy2 > 4.0) { // 4.0 = 2.0^2 (escape radius squared)
+      return i;
     }
-    
-    return params.maxIterations;  // Point is in the set (didn't escape)
+
+    // z = z^2 + c
+    float temp = zx2 - zy2 + cx;
+    zy = 2.0 * zx * zy + cy;
+    zx = temp;
+  }
+
+  return params.maxIterations; // Point is in the set (didn't escape)
+}
+
+/**
+ * @brief Calculate Julia set iterations for a point
+ *
+ * Julia sets use the same iteration formula as Mandelbrot but with a fixed c
+ * value. Here we use c = -0.7 + 0.27015i (a common Julia set parameter).
+ *
+ * @param zx0 Initial real component of z
+ * @param zy0 Initial imaginary component of z
+ * @return Number of iterations before escape
+ */
+uint juliaIterations(float zx0, float zy0) {
+  float zx = zx0;
+  float zy = zy0;
+
+  // Julia set constant (can be made configurable later)
+  float cx = -0.7;
+  float cy = 0.27015;
+
+  for (uint i = 0; i < params.maxIterations; i++) {
+    float zx2 = zx * zx;
+    float zy2 = zy * zy;
+
+    if (zx2 + zy2 > 4.0) {
+      return i;
+    }
+
+    // z = z^2 + c
+    float temp = zx2 - zy2 + cx;
+    zy = 2.0 * zx * zy + cy;
+    zx = temp;
+  }
+
+  return params.maxIterations;
+}
+
+/**
+ * @brief Calculate Burning Ship fractal iterations for a point
+ *
+ * The Burning Ship fractal uses: z = (|Re(z)| + i|Im(z)|)^2 + c
+ *
+ * @param cx Real component of the complex number c
+ * @param cy Imaginary component of the complex number c
+ * @return Number of iterations before escape
+ */
+uint burningShipIterations(float cx, float cy) {
+  float zx = 0.0;
+  float zy = 0.0;
+
+  for (uint i = 0; i < params.maxIterations; i++) {
+    float zx2 = zx * zx;
+    float zy2 = zy * zy;
+
+    if (zx2 + zy2 > 4.0) {
+      return i;
+    }
+
+    // Burning Ship: z = (|Re(z)| + i|Im(z)|)^2 + c
+    float temp = zx2 - zy2 + cx;
+    zy = 2.0 * abs(zx) * abs(zy) + cy;
+    zx = temp;
+  }
+
+  return params.maxIterations;
+}
+
+/**
+ * @brief Calculate fractal iterations based on fractal type
+ *
+ * @param fx X coordinate in fractal space
+ * @param fy Y coordinate in fractal space
+ * @return Number of iterations before escape
+ */
+uint calculateFractalIterations(float fx, float fy) {
+  switch (params.fractalType) {
+  case 0: // Mandelbrot
+    return mandelbrotIterations(fx, fy);
+  case 1: // Julia Set
+    return juliaIterations(fx, fy);
+  case 2: // Burning Ship
+    return burningShipIterations(fx, fy);
+  default:
+    return mandelbrotIterations(fx, fy);
+  }
 }
 
 /**
  * @brief Map iteration count to color
- * 
+ *
  * Creates a smooth color gradient based on the iteration count.
  * Points in the set (max iterations) are colored black.
  * Points outside the set get colors based on escape time.
- * 
+ *
  * @param iterations Number of iterations before escape
  * @return RGBA color as packed uint32
  */
 uint iterationsToColor(uint iterations) {
-    if (iterations >= params.maxIterations) {
-        // Point is in the Mandelbrot set - color it black
-        return packRGBA(0.0, 0.0, 0.0, 1.0);
-    }
-    
-    // Create smooth color gradient based on iteration count
-    float t = float(iterations) / float(params.maxIterations);
-    t = t * params.colorScale;  // Apply color scaling
-    
-    // Use HSV color space for smooth gradients
-    float hue = fract(t * 3.0);  // Cycle through hues
-    float sat = 1.0;             // Full saturation for vibrant colors
-    float val = t < 1.0 ? t : 1.0;  // Brightness based on iteration count
-    
-    vec3 rgb = hsv2rgb(hue, sat, val);
-    return packRGBA(rgb.r, rgb.g, rgb.b, 1.0);
+  if (iterations >= params.maxIterations) {
+    // Point is in the Mandelbrot set - color it black
+    return packRGBA(0.0, 0.0, 0.0, 1.0);
+  }
+
+  // Create smooth color gradient based on iteration count
+  float t = float(iterations) / float(params.maxIterations);
+  t = t * params.colorScale; // Apply color scaling
+
+  // Use HSV color space for smooth gradients
+  float hue = fract(t * 3.0);    // Cycle through hues
+  float sat = 1.0;               // Full saturation for vibrant colors
+  float val = t < 1.0 ? t : 1.0; // Brightness based on iteration count
+
+  vec3 rgb = hsv2rgb(hue, sat, val);
+  return packRGBA(rgb.r, rgb.g, rgb.b, 1.0);
 }
 
 /**
  * @brief Main compute shader entry point
- * 
+ *
  * This function is called for each work item (pixel) in the compute dispatch.
  * It calculates the Mandelbrot set membership for the current pixel and
  * writes the resulting color to the output buffer.
  */
 void main() {
-    // Get current pixel coordinates
-    uvec2 pixelCoord = gl_GlobalInvocationID.xy;
-    
-    // Bounds check - ensure we don't write outside the image
-    if (pixelCoord.x >= params.imageWidth || pixelCoord.y >= params.imageHeight) {
-        return;
-    }
-    
-    // Convert pixel coordinates to fractal space coordinates
-    // Map from [0, width] x [0, height] to fractal coordinate system
-    float aspectRatio = float(params.imageWidth) / float(params.imageHeight);
-    
-    // Calculate the size of the visible fractal area
-    float fractalWidth = 4.0 / params.zoom;  // Base width of 4.0 units
-    float fractalHeight = fractalWidth / aspectRatio;
-    
-    // Convert pixel coordinates to fractal coordinates
-    float fx = params.centerX + (float(pixelCoord.x) / float(params.imageWidth) - 0.5) * fractalWidth;
-    float fy = params.centerY + (float(pixelCoord.y) / float(params.imageHeight) - 0.5) * fractalHeight;
-    
-    // Calculate Mandelbrot iterations for this point
-    uint iterations = mandelbrotIterations(fx, fy);
-    
-    // Convert iterations to color
-    uint color = iterationsToColor(iterations);
-    
-    // Write color to output buffer
-    uint pixelIndex = pixelCoord.y * params.imageWidth + pixelCoord.x;
-    outputBuffer.pixels[pixelIndex] = color;
+  // Get current pixel coordinates
+  uvec2 pixelCoord = gl_GlobalInvocationID.xy;
+
+  // Bounds check - ensure we don't write outside the image
+  if (pixelCoord.x >= params.imageWidth || pixelCoord.y >= params.imageHeight) {
+    return;
+  }
+
+  // Convert pixel coordinates to fractal space coordinates
+  // Map from [0, width] x [0, height] to fractal coordinate system
+  float aspectRatio = float(params.imageWidth) / float(params.imageHeight);
+
+  // Calculate the size of the visible fractal area
+  float fractalWidth = 4.0 / params.zoom; // Base width of 4.0 units
+  float fractalHeight = fractalWidth / aspectRatio;
+
+  // Convert pixel coordinates to fractal coordinates
+  float fx =
+      params.centerX +
+      (float(pixelCoord.x) / float(params.imageWidth) - 0.5) * fractalWidth;
+  float fy =
+      params.centerY +
+      (float(pixelCoord.y) / float(params.imageHeight) - 0.5) * fractalHeight;
+
+  // Calculate fractal iterations for this point
+  uint iterations = calculateFractalIterations(fx, fy);
+
+  // Convert iterations to color
+  uint color = iterationsToColor(iterations);
+
+  // Write color to output buffer
+  uint pixelIndex = pixelCoord.y * params.imageWidth + pixelCoord.x;
+  outputBuffer.pixels[pixelIndex] = color;
 }
 
 /**
  * Shader Implementation Notes:
- * 
+ *
  * 1. Performance Optimizations:
  *    - Uses 16x16 local work group size for good GPU utilization
  *    - Bounds checking to avoid out-of-bounds writes
  *    - Escape radius test optimized (compare squared values)
  *    - Minimal branching in the iteration loop
- * 
+ *
  * 2. Mathematical Accuracy:
  *    - Uses float precision (sufficient for most zoom levels)
  *    - Could be upgraded to double precision for extreme zooms
  *    - Standard Mandelbrot escape radius of 2.0
- * 
+ *
  * 3. Color Generation:
  *    - HSV color space for smooth gradients
  *    - Configurable color scaling parameter
  *    - Black color for points in the set
  *    - Packed RGBA format for memory efficiency
- * 
+ *
  * 4. Coordinate Mapping:
  *    - Supports arbitrary center and zoom level
  *    - Maintains aspect ratio for non-square images
  *    - Easy to extend for panning and zooming
- * 
+ *
  * 5. Future Enhancements:
  *    - Double precision for extreme zoom levels
  *    - Smooth coloring algorithms (continuous escape time)
